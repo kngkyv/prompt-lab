@@ -777,6 +777,28 @@ def classify_response(text: str) -> str:
 
 
 # ─── API call ────────────────────────────────────────────────────────────────
+# The Anthropic SDK removed the top-level `temperature` argument in its 1.0
+# release; `Messages.create()` now raises TypeError on it. We probe once on
+# the first call and drop the argument from then on, so this file runs
+# unchanged on both the 0.x and 1.x SDKs.
+_TEMPERATURE_SUPPORTED = None
+
+
+def _create(client, **kwargs):
+    """`client.messages.create`, tolerant of SDKs without `temperature`."""
+    global _TEMPERATURE_SUPPORTED
+    if _TEMPERATURE_SUPPORTED is False:
+        kwargs.pop("temperature", None)
+    try:
+        return client.messages.create(**kwargs)
+    except TypeError as e:
+        if "temperature" not in kwargs or "temperature" not in str(e):
+            raise
+        _TEMPERATURE_SUPPORTED = False
+        kwargs.pop("temperature", None)
+        return client.messages.create(**kwargs)
+
+
 def call_once(client, messages, temperature=0.7, system_override=None):
     """Adapter for Anthropic API. `messages` may include role='system' entries
     which will be extracted into the top-level system arg. `system_override`
@@ -797,7 +819,7 @@ def call_once(client, messages, temperature=0.7, system_override=None):
     )
     if system:
         kwargs["system"] = system
-    r = client.messages.create(**kwargs)
+    r = _create(client, **kwargs)
     return {
         "text": r.content[0].text,
         "input_tokens": r.usage.input_tokens,
